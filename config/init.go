@@ -8,7 +8,9 @@ import (
 )
 
 type Config struct {
-	BotApiToken string `mapstructure:"bot_api_token"`
+	BotApiToken string  `mapstructure:"bot_api_token"`
+	AdminIds    []int64 `mapstructure:"admin_ids"`
+	ServerIp    string  `mapstructure:"server_ip"`
 }
 
 func Init() (config *Config, err error) {

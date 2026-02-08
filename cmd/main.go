@@ -4,6 +4,10 @@ import (
 	"log/slog"
 	"os"
 	"serv-executor-bot/config"
+	bot "serv-executor-bot/internal/app/entities/bot/usecase"
+	executor "serv-executor-bot/internal/app/entities/executor/usecase"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func main() {
@@ -16,6 +20,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info(config.BotApiToken)
+	botAPI, err := tgbotapi.NewBotAPI(config.BotApiToken)
+	if err != nil {
+		logger.Error("failed to create telegram bot", "error", err)
+		os.Exit(1)
+	}
+	executorUseCase := executor.NewExecutorUseCase(logger)
 
+	bot.NewBotUseCase(logger, config, botAPI, executorUseCase).Serve()
 }
