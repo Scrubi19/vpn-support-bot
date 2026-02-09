@@ -43,6 +43,7 @@ func (uc *BotUseCase) Serve() {
 
 	for update := range updates {
 		if update.Message != nil {
+			uc.logger.Info("Received message", "user_id", update.Message.From.ID, "text", update.Message.Text)
 			if !uc.isUserAdmin(update.Message.From.ID) {
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "У вас нет доступа к этому боту.")
 				uc.bot.Send(msg)

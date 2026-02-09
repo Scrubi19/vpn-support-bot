@@ -1,18 +1,17 @@
 package main
 
 import (
-	"log/slog"
 	"os"
 	"serv-executor-bot/config"
 	bot "serv-executor-bot/internal/app/entities/bot/usecase"
 	executor "serv-executor-bot/internal/app/entities/executor/usecase"
+	"serv-executor-bot/internal/utils/logger"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	logger := logger.NewLogger()
 
 	config, err := config.Init()
 	if err != nil {
