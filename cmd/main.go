@@ -21,10 +21,15 @@ func main() {
 
 	botAPI, err := tgbotapi.NewBotAPI(config.BotApiToken)
 	if err != nil {
-		logger.Error("failed to create telegram bot", "error", err)
+		logger.Error("failed connect to telegram bot", "error", err)
 		os.Exit(1)
 	}
 	executorUseCase := executor.NewExecutorUseCase(logger)
 
-	bot.NewBotUseCase(logger, config, botAPI, executorUseCase).Serve()
+	bot, err := bot.NewBotUseCase(logger, config, botAPI, executorUseCase)
+	if err != nil {
+		logger.Error("failed create telegram bot", "error", err)
+		os.Exit(1)
+	}
+	bot.Serve()
 }

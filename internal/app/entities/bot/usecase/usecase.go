@@ -1,7 +1,9 @@
 package usecase
 
 import (
+	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"serv-executor-bot/config"
@@ -17,25 +19,35 @@ import (
 type BotUseCase struct {
 	logger         *slog.Logger
 	config         *config.Config
+	serverIp       string
 	bot            *tgbotapi.BotAPI
 	executor       *executor.ExecutorUseCase
 	awaitingAction map[int64]string
 }
 
-func NewBotUseCase(logger *slog.Logger, config *config.Config, bot *tgbotapi.BotAPI, executor *executor.ExecutorUseCase) *BotUseCase {
+func NewBotUseCase(logger *slog.Logger, config *config.Config, bot *tgbotapi.BotAPI, executor *executor.ExecutorUseCase) (*BotUseCase, error) {
+	output, err := executor.ExecuteCommand("hostname -I | awk '{print $1}'")
+	if err != nil {
+		return nil, error_wrapper.Error(trace.GetFuncName(), err)
+	}
+	ip := net.ParseIP(strings.ReplaceAll(output, "\n", ""))
+	if ip == nil {
+		return nil, error_wrapper.Error(trace.GetFuncName(), fmt.Errorf("parse IP error, command output: %s", output))
+	}
 	return &BotUseCase{
 		logger:         logger,
 		config:         config,
+		serverIp:       ip.String(),
 		bot:            bot,
 		executor:       executor,
 		awaitingAction: make(map[int64]string),
-	}
+	}, nil
 }
 
 func (uc *BotUseCase) BotUsecase() {}
 
 func (uc *BotUseCase) Serve() {
-	uc.logger.Info("Bot started successfully")
+	uc.logger.Info("VPN support Bot started on server with", "ip", uc.serverIp)
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 
@@ -57,7 +69,7 @@ func (uc *BotUseCase) Serve() {
 				case "1.awaiting_client_name":
 					clientName := update.Message.Text
 					uc.awaitingAction[chatID] = ""
-					uc.finishAddClient(chatID, clientName)
+					uc.addClient(chatID, clientName)
 				case "3.awaiting_client_name":
 					clientName := update.Message.Text
 					// validate clientName format
@@ -86,7 +98,6 @@ func (uc *BotUseCase) Serve() {
 				uc.executor.InteractiveShell()
 			}
 		}
-
 	}
 }
 
@@ -106,7 +117,7 @@ func (uc *BotUseCase) printMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		),
 	)
 
-	msg := tgbotapi.NewMessage(chatID, uc.config.ServerIp+" - server menu:")
+	msg := tgbotapi.NewMessage(chatID, uc.serverIp+" - server menu:")
 	msg.ReplyMarkup = keyboard
 	bot.Send(msg)
 }
@@ -119,7 +130,7 @@ func (uc *BotUseCase) createClient(chatID int64, clientName string) error {
 		return error_wrapper.Error(trace.GetFuncName(), err)
 	}
 	// 2. Rename file to clientName.ovpn
-	command := "mv ~/antizapret/client/openvpn/antizapret-udp/'antizapret-" + clientName + "-(" + uc.config.ServerIp + ")-udp.ovpn' ~/antizapret/client/openvpn/antizapret-udp/" + clientName + ".ovpn"
+	command := "mv ~/antizapret/client/openvpn/antizapret-udp/'antizapret-" + clientName + "-(" + uc.serverIp + ")-udp.ovpn' ~/antizapret/client/openvpn/antizapret-udp/" + clientName + ".ovpn"
 	uc.logger.Info("Executing command: " + command)
 	output, err = uc.executor.ExecuteCommand(command)
 	if err != nil {
@@ -161,6 +172,47 @@ func (uc *BotUseCase) deleteClient(chatID int64, clientName string) error {
 	return nil
 }
 
+func (uc *BotUseCase) startAddClient(chatID int64) {
+	uc.awaitingAction[chatID] = "1.awaiting_client_name"
+	msg := tgbotapi.NewMessage(chatID, "Введи имя клиента (lastname_name):")
+	uc.bot.Send(msg)
+}
+
+func (uc *BotUseCase) startDeleteClient(chatID int64) {
+	uc.awaitingAction[chatID] = "3.awaiting_client_name"
+	msg := tgbotapi.NewMessage(chatID, "Введи имя клиента (lastname_name):")
+	uc.bot.Send(msg)
+}
+
+func (uc *BotUseCase) addClient(chatID int64, clientName string) {
+	msg := tgbotapi.NewMessage(chatID, "Создаю клиента: "+clientName+"...")
+	uc.bot.Send(msg)
+
+	if err := uc.createClient(chatID, clientName); err != nil {
+		errMsg := tgbotapi.NewMessage(chatID, "Ошибка при создании клиента: "+err.Error())
+		uc.bot.Send(errMsg)
+		return
+	}
+
+	okMsg := tgbotapi.NewMessage(chatID, "Клиент "+clientName+" успешно создан и отправлен.")
+	uc.bot.Send(okMsg)
+}
+
+func (uc *BotUseCase) isUserAdmin(userID int64) bool {
+	return slices.Contains(uc.config.AdminIds, userID)
+}
+
+func (uc *BotUseCase) expandPath(path string) (string, error) {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	return path, nil
+}
+
 func (uc *BotUseCase) sendFile(chatID int64, filePath string) error {
 	expandedPath, err := uc.expandPath(filePath)
 	if err != nil {
@@ -193,45 +245,4 @@ func (uc *BotUseCase) sendFile(chatID int64, filePath string) error {
 		return error_wrapper.Error(trace.GetFuncName(), err)
 	}
 	return nil
-}
-
-func (uc *BotUseCase) startAddClient(chatID int64) {
-	uc.awaitingAction[chatID] = "1.awaiting_client_name"
-	msg := tgbotapi.NewMessage(chatID, "Введи имя клиента (lastname_name):")
-	uc.bot.Send(msg)
-}
-
-func (uc *BotUseCase) startDeleteClient(chatID int64) {
-	uc.awaitingAction[chatID] = "3.awaiting_client_name"
-	msg := tgbotapi.NewMessage(chatID, "Введи имя клиента (lastname_name):")
-	uc.bot.Send(msg)
-}
-
-func (uc *BotUseCase) finishAddClient(chatID int64, clientName string) {
-	msg := tgbotapi.NewMessage(chatID, "Создаю клиента: "+clientName+"...")
-	uc.bot.Send(msg)
-
-	if err := uc.createClient(chatID, clientName); err != nil {
-		errMsg := tgbotapi.NewMessage(chatID, "Ошибка при создании клиента: "+err.Error())
-		uc.bot.Send(errMsg)
-		return
-	}
-
-	okMsg := tgbotapi.NewMessage(chatID, "Клиент "+clientName+" успешно создан и отправлен.")
-	uc.bot.Send(okMsg)
-}
-
-func (uc *BotUseCase) isUserAdmin(userID int64) bool {
-	return slices.Contains(uc.config.AdminIds, userID)
-}
-
-func (uc *BotUseCase) expandPath(path string) (string, error) {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, path[2:]), nil
-	}
-	return path, nil
 }
